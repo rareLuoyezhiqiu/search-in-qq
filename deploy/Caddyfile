@@ -1,0 +1,9 @@
+{$DOMAIN} {
+    encode zstd gzip
+    request_body {
+        max_size 2MB
+    }
+    @private path /events/* /docs* /openapi.json*
+    respond @private 404
+    reverse_proxy api:8000
+}

@@ -1,0 +1,32 @@
+services:
+  api:
+    build: ../backend
+    restart: unless-stopped
+    volumes: [collector-data:/data]
+    command: [sh, -c, 'alembic upgrade head && python -m collector.cli cleanup && uvicorn collector.api:app --host 0.0.0.0 --port 8000 --no-access-log']
+    logging: &logging
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+  worker:
+    build: ../backend
+    restart: unless-stopped
+    volumes: [collector-data:/data]
+    environment:
+      INGEST_TOKEN: ${INGEST_TOKEN:?set a random token of at least 32 characters}
+    command: [sh, -c, 'alembic upgrade head && uvicorn collector.worker:app --host 0.0.0.0 --port 8001 --no-access-log']
+    ports: ['127.0.0.1:8001:8001']
+    depends_on: [api]
+    logging: *logging
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set your HTTPS domain}
+    ports: ['80:80', '443:443']
+    volumes: ['./Caddyfile:/etc/caddy/Caddyfile:ro', 'caddy-data:/data', 'caddy-config:/config']
+    depends_on: [api]
+    logging: *logging
+volumes:
+  collector-data:
+  caddy-data:
+  caddy-config:
