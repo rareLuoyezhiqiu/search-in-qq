@@ -4,6 +4,11 @@ services:
     restart: unless-stopped
     volumes: [collector-data:/data]
     command: [sh, -c, 'alembic upgrade head && python -m collector.cli cleanup && uvicorn collector.api:app --host 0.0.0.0 --port 8000 --no-access-log']
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
     logging: &logging
       driver: json-file
       options: {max-size: 10m, max-file: '3'}
@@ -13,9 +18,11 @@ services:
     volumes: [collector-data:/data]
     environment:
       INGEST_TOKEN: ${INGEST_TOKEN:?set a random token of at least 32 characters}
-    command: [sh, -c, 'alembic upgrade head && uvicorn collector.worker:app --host 0.0.0.0 --port 8001 --no-access-log']
+    command: [sh, -c, 'uvicorn collector.worker:app --host 0.0.0.0 --port 8001 --no-access-log']
     ports: ['127.0.0.1:8001:8001']
-    depends_on: [api]
+    depends_on:
+      api:
+        condition: service_healthy
     logging: *logging
   caddy:
     image: caddy:2.10.2-alpine

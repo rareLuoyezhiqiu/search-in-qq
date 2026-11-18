@@ -101,7 +101,7 @@ def create_app(store=None):
         if offset<0 or limit<1 or limit>100 or len(q)>500:
             raise HTTPException(422,'分页或搜索参数无效')
         with store.tx() as c:
-            found=rows(c,"SELECT DISTINCT i.* FROM images i JOIN occurrences o ON o.image_id=i.id JOIN messages m ON m.id=o.message_id WHERE "+VISIBLE+" AND (:source IS NULL OR m.source_id=:source) AND (:start IS NULL OR o.received>=:start) AND (:end IS NULL OR o.received<:end) AND (:fav=0 OR i.favorite=1) AND (:q='' OR instr(i.note,:q)>0 OR instr(i.tags,:q)>0 OR instr(m.body,:q)>0) ORDER BY i.id DESC",now=time.time(),source=source,start=start,end=end,fav=int(favorite),q=q)
+            found=rows(c,"SELECT DISTINCT i.* FROM images i JOIN occurrences o ON o.image_id=i.id JOIN messages m ON m.id=o.message_id WHERE "+VISIBLE+" AND (:source IS NULL OR m.source_id=:source) AND (:start IS NULL OR o.received>=:start) AND (:end IS NULL OR o.received<:end) AND (:fav=0 OR i.favorite=1) AND (:q='' OR instr(i.note,:q)>0 OR instr(i.tags,:q)>0 OR instr(m.body,:q)>0) GROUP BY i.id ORDER BY MAX(o.received) DESC,i.id DESC",now=time.time(),source=source,start=start,end=end,fav=int(favorite),q=q)
             for i in found:
                 i['tags']=json.loads(i['tags'])
             if tag:

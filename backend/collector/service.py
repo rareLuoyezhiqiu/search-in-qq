@@ -15,6 +15,8 @@ def ingest(store, event, now=None):
     now = time.time() if now is None else now
     if event.get('post_type') == 'meta_event':
         status = event.get('status', {})
+        if not isinstance(status, dict):
+            raise ValueError('心跳格式无效')
         with store.tx() as c:
             run(c, 'UPDATE runtime SET heartbeat=:now, online=:online WHERE id=1', now=now, online=int(bool(status.get('online', False))))
         return {'accepted': False, 'reason': 'heartbeat'}
@@ -25,6 +27,8 @@ def ingest(store, event, now=None):
         raise ValueError('缺少消息标识字段')
     digest = hashlib.sha256(json.dumps([str(event[k]) for k in required[:3]], ensure_ascii=False).encode()).hexdigest()
     segments = event['message']
+    if any(not isinstance(s, dict) or not isinstance(s.get('data', {}), dict) for s in segments):
+        raise ValueError('消息段格式无效')
     if len(segments) > 100:
         raise ValueError('消息段超过上限')
     images = [(n, s.get('data', {}).get('url', '')) for n,s in enumerate(segments) if s.get('type') == 'image']
@@ -71,6 +75,7 @@ def cleanup(store, now=None):
                 run(c, "UPDATE occurrences SET state='failed',error='持久文件缺失，可重试下载' WHERE image_id=:id", id=i['id'])
 
 def process_one(store, downloader=download, now=None):
+    realtime = now is None
     now = time.time() if now is None else now
     with store.tx() as c:
         run(c, 'UPDATE runtime SET worker=:now WHERE id=1', now=now)
@@ -85,6 +90,8 @@ def process_one(store, downloader=download, now=None):
     try:
         with store.tx() as c:
             budget = rows(c,'SELECT budget FROM settings')[0]['budget']
+        if usage(store)+MAX_BYTES > budget:
+            cleanup(store, now)
         if usage(store)+MAX_BYTES > budget or shutil.disk_usage(store.root).free < MAX_BYTES+100*1024*1024:
             raise ValueError('容量不足，下载已暂停；释放空间或提高预算后重试')
         downloader(task['url'],tmp)
@@ -102,9 +109,12 @@ def process_one(store, downloader=download, now=None):
         with tmp.open('rb') as stream:
             digest = hashlib.file_digest(stream, 'sha256').hexdigest()
         size = tmp.stat().st_size
+        if realtime:
+            now = time.time()
         with store.tx() as c:
             current = rows(c, 'SELECT o.*,COALESCE(i.favorite,0) AS favorite FROM occurrences o LEFT JOIN images i ON i.id=o.image_id WHERE o.id=:id',id=task['id'])
             if not current or (current[0]['expires']<=now and not current[0]['favorite']):
+                run(c, "UPDATE occurrences SET state='expired',lease=0,url='' WHERE id=:id", id=task['id'])
                 return True
             old = rows(c, 'SELECT * FROM images WHERE id=:id',id=digest)
             if not old or old[0]['state']!='saved' or not all((store.media/(digest+s)).exists() for s in ('.original','.jpg')):
@@ -123,4 +133,3 @@ def process_one(store, downloader=download, now=None):
     finally:
         tmp.unlink(missing_ok=True)
         thumb.unlink(missing_ok=True)
-

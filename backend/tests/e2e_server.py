@@ -24,4 +24,4 @@ def draw(url,path):
     d.polygon([(0,570),(300,360),(500,560),(500,640),(0,640)],fill='#749183')
     im.save(path,'PNG')
 while process_one(store,draw):pass
-uvicorn.run(create_app(store),host='127.0.0.1',port=8765,access_log=False)
+uvicorn.run(create_app(store),host='127.0.0.1',port=18765,access_log=False)

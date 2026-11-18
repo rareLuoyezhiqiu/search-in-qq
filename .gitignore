@@ -20,3 +20,4 @@ app/playwright-report/
 .jdk21/
 jdk21.zip
 .gradle/
+.local/

@@ -205,3 +205,62 @@ def test_corrupt_payload_never_saved(env):
     assert client.get('/api/tasks').json()[0]['error']
     assert list(store.media.iterdir())==[]
 
+def test_expiry_during_download(env,monkeypatch):
+    store,client=env
+    start=time.time()
+    ingest(store,event(urls=1),start)
+    def slow(url,path):
+        pixels(url,path)
+        monkeypatch.setattr('collector.service.time.time',lambda:start+432000)
+    process_one(store,slow)
+    assert not list(store.media.glob('*.original'))
+    with store.tx() as c:
+        assert rows(c,'SELECT state FROM occurrences')[0]['state']=='expired'
+
+def test_malformed_segments_and_orphan_cleanup(env):
+    store,client=env
+    bad=event();bad['message']=[None]
+    with pytest.raises(ValueError):ingest(store,bad)
+    orphan=store.media/'orphan.original';orphan.write_bytes(b'orphan')
+    import os
+    os.utime(orphan,(1,1))
+    cleanup(store)
+    assert not orphan.exists()
+
+def test_newest_image_first_and_stable_pages(env):
+    store,client=env
+    collect(store)
+    old=image_id(client)
+    ingest(store,event('new',urls=1),time.time()+1)
+    def different(url,path):Image.new('RGB',(10,20),'red').save(path,'PNG')
+    process_one(store,different,time.time()+2)
+    first=client.get('/api/images?limit=1').json()['items'][0]['id']
+    second=client.get('/api/images?limit=1&offset=1').json()['items'][0]['id']
+    assert first!=old and second==old
+
+def test_backup_restores_only_favorites_and_receipts(env,tmp_path):
+    import subprocess,sys,os
+    store,client=env
+    collect(store)
+    id=image_id(client)
+    client.patch('/api/images/'+id,json={'favorite':True,'note':'保留备注','tags':['收藏']})
+    out=tmp_path/'export'
+    result=subprocess.run([sys.executable,'-m','collector.cli','backup','--output',str(out)],env={**os.environ,'DATA_DIR':str(store.root)},capture_output=True)
+    assert result.returncode==0,result.stderr
+    restored=Store(out)
+    cleanup(restored,time.time()+10*86400)
+    with restored.tx() as c:
+        assert rows(c,'SELECT note FROM images')[0]['note']=='保留备注'
+        assert rows(c,'SELECT * FROM sessions')==[]
+        assert len(rows(c,'SELECT * FROM receipts'))==1
+    assert (restored.media/(id+'.original')).read_bytes()==(store.media/(id+'.original')).read_bytes()
+    restored.engine.dispose()
+
+def test_migration_initializes_real_database(tmp_path):
+    import subprocess,sys,os
+    from pathlib import Path
+    result=subprocess.run([sys.executable,'-m','alembic','upgrade','head'],cwd=Path(__file__).resolve().parents[1],env={**os.environ,'DATA_DIR':str(tmp_path)},capture_output=True)
+    assert result.returncode==0,result.stderr
+    store=Store(tmp_path)
+    with store.tx() as c:assert rows(c,'SELECT days FROM settings')[0]['days']==5
+    store.engine.dispose()

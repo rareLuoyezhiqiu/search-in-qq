@@ -7,3 +7,9 @@ describe('连接与会话',()=>{
  it('会话失效时清空令牌并提示重新登录',async()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({detail:'登录已失效'}),{status:401})));await expect(api.api('/images')).rejects.toThrow('登录已失效');expect(api.state.token).toBe('');});
  it('把中文筛选与编辑内容原样传给服务端，不在 URL 暴露令牌',async()=>{const fetcher=vi.fn().mockResolvedValue(new Response('{"ok":true}'));vi.stubGlobal('fetch',fetcher);await api.api('/images/a','PATCH',{note:'中文',tags:['壁纸']});const [url,options]=fetcher.mock.calls[0];expect(url).not.toContain('session');expect(options.headers.Authorization).toBe('Bearer session');expect(JSON.parse(options.body)).toEqual({note:'中文',tags:['壁纸']});});
 });
+it('清理缓存时丢弃仍在下载的旧图片',async()=>{
+ api.clearCache();let resolve!:(r:Response)=>void;
+ vi.stubGlobal('fetch',()=>new Promise<Response>(r=>resolve=r));
+ const pending=api.media('old');api.clearCache();resolve(new Response(new Blob(['image'])));
+ await expect(pending).rejects.toThrow('缓存已更新');expect(api.state.cacheBytes).toBe(0);
+});
