@@ -2,12 +2,23 @@ import {reactive} from 'vue';
 import {Capacitor,registerPlugin} from '@capacitor/core';
 export const state=reactive({server:localStorage.getItem('server')||'',token:'',cacheEpoch:0,cacheBytes:0,cacheLimit:Number(localStorage.getItem('cacheLimit'))||200*1024*1024});
 const cache=new Map<string,{url:string,size:number}>();
-export function clearCache(){state.cacheEpoch++;for(const x of cache.values())URL.revokeObjectURL(x.url);cache.clear();state.cacheBytes=0;}
+export function clearCache(keepImageId?:string){
+ state.cacheEpoch++;
+ for(const [key,item] of cache){
+  if(keepImageId && key.startsWith(keepImageId+':'))continue;
+  URL.revokeObjectURL(item.url);
+  cache.delete(key);
+  state.cacheBytes-=item.size;
+ }
+}
+export class ApiError extends Error {
+ constructor(readonly status:number,message:string){super(message);}
+}
 export function validServer(value:string){try{const u=new URL(value);return !u.username&&!u.password&&!u.search&&!u.hash&&(u.protocol==='https:'||(!Capacitor.isNativePlatform()&&['localhost','127.0.0.1'].includes(u.hostname)&&u.protocol==='http:'));}catch{return false;}}
 export async function api(path:string,method='GET',body?:unknown):Promise<any>{
  const response=await fetch(state.server.replace(/\/$/,'')+'/api'+path,{method,headers:{Authorization:'Bearer '+state.token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(30000)});
  if(response.status===401){state.token='';clearCache();}
- if(!response.ok){let message='请求失败';try{const error=await response.json();message=typeof error.detail==='string'?error.detail:'输入内容不符合要求';}catch{}throw new Error(message);}
+ if(!response.ok){let message='请求失败';try{const error=await response.json();message=typeof error.detail==='string'?error.detail:'输入内容不符合要求';}catch{}throw new ApiError(response.status,message);}
  return response.status===204?null:response.json();
 }
 export async function media(id:string,thumbnail=true){

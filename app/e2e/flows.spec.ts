@@ -4,10 +4,38 @@ test('登录、浏览、筛选、收藏编辑、来源管理和退出',async({pa
  await page.goto('/');await page.screenshot({path:'../tests/screenshots/01-login.png',fullPage:true});
  await page.getByLabel('云端地址').fill('http://127.0.0.1:18765');await page.getByLabel('登录密码').fill('local-test-password');await page.getByRole('button',{name:'连接我的图库'}).click();
  await expect(page.locator('.tile')).toHaveCount(6);await expect(page.locator('.tile img')).toHaveCount(6);await page.screenshot({path:'../tests/screenshots/02-gallery.png',fullPage:true});
- await page.locator('.tile').first().click();await expect(page.getByRole('dialog')).toBeVisible();await page.getByLabel('收藏，长期保留').check();await page.getByLabel('标签',{exact:true}).fill('壁纸，山色');await page.getByLabel('备注',{exact:true}).fill('喜欢这幅风景');await page.getByRole('button',{name:'保存整理'}).click();await expect(page.getByRole('status')).toContainText('已保存');await page.screenshot({path:'../tests/screenshots/03-detail.png',fullPage:true});
+ await page.locator('.tile').first().click();await expect(page.getByRole('dialog')).toBeVisible();await page.getByLabel('收藏，长期保留').check();await page.getByLabel('标签',{exact:true}).fill('壁纸，山色');await page.getByLabel('备注',{exact:true}).fill('喜欢这幅风景');
+ const dialog=page.getByRole('dialog');
+ const original=dialog.locator('.viewer img');
+ await expect(original).toBeVisible();
+ const originalUrl=await original.getAttribute('src');
+ const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/images');
+ await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
+ await refreshed;
+ await expect(dialog).toBeVisible();
+ await expect(original).toHaveAttribute('src',originalUrl!);
+ await expect(dialog.getByLabel('备注',{exact:true})).toHaveValue('喜欢这幅风景');
+ await expect(dialog.getByLabel('标签',{exact:true})).toHaveValue('壁纸，山色');
+ await expect(dialog.getByLabel('收藏，长期保留')).toBeChecked();
+ await page.getByRole('button',{name:'保存整理'}).click();await expect(page.getByRole('status')).toContainText('已保存');await page.screenshot({path:'../tests/screenshots/03-detail.png',fullPage:true});
  await page.getByRole('button',{name:'返回图库'}).click();await page.getByLabel('搜索图片').fill('风景');await expect(page.locator('.tile')).toHaveCount(1);await page.locator('.tile').click();await expect(page.getByLabel('备注',{exact:true})).toHaveValue('喜欢这幅风景');await page.getByRole('button',{name:'返回图库'}).click();
  await page.getByRole('button',{name:'⊞ 来源'}).click();await page.getByLabel('QQ 群号').fill('789');await page.getByLabel('来源名称').fill('新的测试群');await page.getByRole('button',{name:'添加来源',exact:true}).click();const card=page.locator('.source-card').filter({hasText:'新的测试群'});await expect(card).toBeVisible();await card.getByRole('button',{name:'暂停'}).click();await expect(card).toContainText('已暂停');await page.screenshot({path:'../tests/screenshots/04-sources.png',fullPage:true});
  await page.getByRole('button',{name:'⚙ 设置'}).click();await expect(page.getByRole('heading',{name:'设置与存储'})).toBeVisible();await page.screenshot({path:'../tests/screenshots/05-settings.png',fullPage:true});
  await page.getByRole('button',{name:'▧ 图库'}).click();await page.setViewportSize({width:1100,height:850});await page.getByRole('button',{name:'重置',exact:true}).click();await expect(page.locator('.tile')).toHaveCount(6);await expect(page.locator('.tile img')).toHaveCount(6);await page.screenshot({path:'../tests/screenshots/06-wide.png',fullPage:true});
  await page.getByRole('button',{name:'⚙ 设置'}).click();await page.getByRole('button',{name:'退出登录'}).click();await expect(page.getByLabel('登录密码')).toBeVisible();expect(errors).toEqual([]);
+});
+
+test('回到前台时关闭已经失效的图片',async({page})=>{
+ await page.goto('/');
+ await page.getByLabel('云端地址').fill('http://127.0.0.1:18765');
+ await page.getByLabel('登录密码').fill('local-test-password');
+ await page.getByRole('button',{name:'连接我的图库'}).click();
+ await page.locator('.tile').first().click();
+ await expect(page.getByRole('dialog')).toBeVisible();
+ await page.route(/\/api\/images\/[a-f0-9]{64}$/,route=>route.fulfill({
+  status:404,json:{detail:'图片不存在或已过期'}
+ }));
+ await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ await expect(page.getByRole('status')).toContainText('图片不存在或已过期');
 });

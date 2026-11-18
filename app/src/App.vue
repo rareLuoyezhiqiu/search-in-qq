@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import {ref,watch,onMounted} from 'vue';
-import {api,state,validServer,clearCache,exportImage} from './api';
+import {ref,watch,onMounted,onUnmounted} from 'vue';
+import {api,ApiError,state,validServer,clearCache,exportImage} from './api';
 import Media from './Media.vue';
 const confirm=window.confirm.bind(window),localStorage=window.localStorage;
 const page=ref('gallery'),password=ref(''),error=ref(''),notice=ref(''),busy=ref(false),images=ref<any[]>([]),sources=ref<any[]>([]),tasks=ref<any[]>([]),settings=ref<any>({}),total=ref(0),selected=ref<any>(null),tags=ref(''),zoom=ref(1);
@@ -8,7 +8,25 @@ const query=ref(''),source=ref(''),date=ref(''),favorite=ref(false),tag=ref(''),
 async function action(fn:()=>Promise<void>){error.value='';busy.value=true;try{await fn();}catch(e){error.value=(e as Error).message;}finally{busy.value=false;}}
 async function login(){await action(async()=>{if(!validServer(state.server))throw new Error('请输入有效的 HTTPS 服务器地址');state.server=state.server.replace(/\/$/,'');const r=await api('/login','POST',{password:password.value});state.token=r.token;password.value='';localStorage.setItem('server',state.server);await refresh();});}
 async function load(more=false){if(!state.token)return;const current=++searchVersion;const params=new URLSearchParams({q:query.value,tag:tag.value,favorite:String(favorite.value),offset:String(more?images.value.length:0)});if(source.value)params.set('source',source.value);if(date.value){const start=new Date(date.value+'T00:00:00');const end=new Date(start);end.setDate(end.getDate()+1);params.set('start',String(+start/1000));params.set('end',String(+end/1000));}const result=await api('/images?'+params);if(current!==searchVersion)return;images.value=more?[...images.value,...result.items]:result.items;total.value=result.total;}
-async function refresh(){clearCache();selected.value=null;[sources.value,tasks.value,settings.value]=await Promise.all([api('/sources'),api('/tasks'),api('/settings')]);await load();}
+async function refresh(){
+ const detail=selected.value;
+ let keepImageId:string|undefined;
+ if(detail){
+  try{
+   const latest=await api('/images/'+detail.id);
+   if(selected.value===detail){
+    detail.sources=latest.sources;
+    keepImageId=detail.id;
+   }
+  }catch(e){
+   if(!(e instanceof ApiError) || e.status!==404)throw e;
+   if(selected.value===detail){selected.value=null;notice.value=e.message;}
+  }
+ }
+ clearCache(keepImageId);
+ [sources.value,tasks.value,settings.value]=await Promise.all([api('/sources'),api('/tasks'),api('/settings')]);
+ await load();
+}
 async function open(id:string){await action(async()=>{selected.value=await api('/images/'+id);tags.value=selected.value.tags.join('，');zoom.value=1;});}
 async function save(){await action(async()=>{const body={favorite:!!selected.value.favorite,note:selected.value.note,tags:tags.value.split(/[,，]/),confirm_expired:false};try{await api('/images/'+selected.value.id,'PATCH',body);}catch(e){if((e as Error).message.includes('全部来源已过期')&&confirm((e as Error).message)){await api('/images/'+selected.value.id,'PATCH',{...body,confirm_expired:true});selected.value=null;}else throw e;}notice.value='已保存';await load();});}
 async function addSource(){await action(async()=>{await api('/sources','POST',{external_id:group.value,name:name.value});group.value='';name.value='';sources.value=await api('/sources');});}
@@ -19,7 +37,9 @@ function time(n:number){return n?new Date(n*1000).toLocaleString():'尚未收到
 function online(){return settings.value.online&&Date.now()/1000-settings.value.heartbeat<120;}
 let timer:ReturnType<typeof setTimeout>;watch([query,source,date,favorite,tag],()=>{clearTimeout(timer);timer=setTimeout(()=>action(()=>load()),250);});
 watch(()=>state.token,value=>{if(!value){images.value=[];selected.value=null;}});
-onMounted(()=>document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.token)action(refresh);}));
+function onVisibilityChange(){if(!document.hidden&&state.token)action(refresh);}
+onMounted(()=>document.addEventListener('visibilitychange',onVisibilityChange));
+onUnmounted(()=>document.removeEventListener('visibilitychange',onVisibilityChange));
 </script>
 <template>
  <main v-if="!state.token" class="login"><div class="brandmark">拾</div><p class="eyebrow">SHITU · 私人图片收藏夹</p><h1>把喜欢的图片<br>好好留下来。</h1><p class="muted">群聊里的灵感，收进自己的图库。</p><form @submit.prevent="login"><label>云端地址<input v-model="state.server" placeholder="https://photos.example.com" required autocomplete="url"></label><label>登录密码<input v-model="password" type="password" placeholder="管理员设置的密码" required autocomplete="current-password"></label><button class="primary" :disabled="busy">{{busy?'正在连接…':'连接我的图库 →'}}</button></form><p v-if="error" role="alert" class="error">{{error}}</p><p class="small muted">单账号私人使用 · 凭据仅保留在本次会话</p></main>
