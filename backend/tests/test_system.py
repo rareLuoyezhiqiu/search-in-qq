@@ -256,6 +256,28 @@ def test_backup_restores_only_favorites_and_receipts(env,tmp_path):
     assert (restored.media/(id+'.original')).read_bytes()==(store.media/(id+'.original')).read_bytes()
     restored.engine.dispose()
 
+def test_incomplete_backup_can_retry_same_destination(env, tmp_path):
+    from collector.cli import backup_favorites
+
+    store, client = env
+    collect(store)
+    image = image_id(client)
+    client.patch('/api/images/' + image, json={'favorite': True, 'note': '', 'tags': []}).raise_for_status()
+    thumbnail = store.media / (image + '.jpg')
+    contents = thumbnail.read_bytes()
+    thumbnail.unlink()
+    out = tmp_path / 'exports' / 'favorites'
+
+    with pytest.raises(FileNotFoundError):
+        backup_favorites(store, out)
+    assert list(out.parent.iterdir()) == []
+
+    thumbnail.write_bytes(contents)
+    backup_favorites(store, out)
+    assert (out / 'media' / thumbnail.name).read_bytes() == contents
+    with pytest.raises(FileExistsError):
+        backup_favorites(store, out)
+
 def test_migration_initializes_real_database(tmp_path):
     import subprocess,sys,os
     from pathlib import Path
