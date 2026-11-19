@@ -13,3 +13,20 @@ it('清理缓存时丢弃仍在下载的旧图片',async()=>{
  const pending=api.media('old');api.clearCache();resolve(new Response(new Blob(['image'])));
  await expect(pending).rejects.toThrow('缓存已更新');expect(api.state.cacheBytes).toBe(0);
 });
+it('删除图片时清除它的原图和缩略图，保留其他图片缓存',async()=>{
+ api.clearCache();
+ const fetcher=vi.fn(async()=>new Response(new Blob(['image'])));
+ vi.stubGlobal('fetch',fetcher);
+ const removedThumb=await api.media('removed');
+ const removedFull=await api.media('removed',false);
+ const retainedThumb=await api.media('retained');
+
+ api.discardImageMedia('removed');
+
+ expect(api.state.cacheBytes).toBe(5);
+ expect(await api.media('retained')).toBe(retainedThumb);
+ expect(await api.media('removed')).not.toBe(removedThumb);
+ expect(await api.media('removed',false)).not.toBe(removedFull);
+ expect(fetcher).toHaveBeenCalledTimes(5);
+ api.clearCache();
+});

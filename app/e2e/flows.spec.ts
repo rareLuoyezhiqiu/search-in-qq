@@ -39,3 +39,73 @@ test('回到前台时关闭已经失效的图片',async({page})=>{
  await expect(page.getByRole('dialog')).toHaveCount(0);
  await expect(page.getByRole('status')).toContainText('图片不存在或已过期');
 });
+
+test('从图库删除图片后重新查询并保留筛选',async({page},testInfo)=>{
+ const errors:string[]=[];
+ const detailUrl=/\/api\/images\/[a-f0-9]{64}$/;
+ page.on('pageerror',e=>errors.push(e.message));
+ page.on('console',message=>{
+  if(message.type()==='error'&&!(detailUrl.test(message.location().url)&&message.text().includes('409'))){
+   errors.push(message.text());
+  }
+ });
+ await page.goto('/');
+ await page.getByLabel('云端地址').fill('http://127.0.0.1:18765');
+ await page.getByLabel('登录密码').fill('local-test-password');
+ await page.getByRole('button',{name:'连接我的图库'}).click();
+ const search=page.getByLabel('搜索图片');
+ const cards=page.locator('.tile');
+ await expect(cards).toHaveCount(6);
+ const listRequest=(url:string)=>new URL(url).pathname==='/api/images';
+ const filtered=page.waitForResponse(response=>listRequest(response.url())&&new URL(response.url()).searchParams.get('q')==='山色');
+ await search.fill('山色');
+ await filtered;
+ await expect(cards).toHaveCount(6);
+ await expect(cards.locator('img')).toHaveCount(6);
+ await page.screenshot({path:testInfo.outputPath('gallery-delete-mobile.png')});
+ await page.setViewportSize({width:1100,height:850});
+ await page.screenshot({path:testInfo.outputPath('gallery-delete-desktop.png')});
+ const remove=cards.first().getByRole('button',{name:'删除图片'});
+ const requests:string[]=[];
+ page.on('request',request=>{
+  if(request.method()==='DELETE'||listRequest(request.url()))requests.push(request.method());
+ });
+
+ page.once('dialog',dialog=>dialog.dismiss());
+ await remove.click();
+ await expect(cards).toHaveCount(6);
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ expect(requests).toEqual([]);
+
+ await page.route(detailUrl,route=>route.request().method()==='DELETE'
+  ? route.fulfill({status:409,json:{detail:'暂时无法删除'},headers:{'Access-Control-Allow-Origin':'http://127.0.0.1:5173'}})
+  : route.continue());
+ page.once('dialog',dialog=>dialog.accept());
+ await remove.click();
+ await expect(page.getByRole('alert')).toContainText('暂时无法删除');
+ await expect(cards).toHaveCount(6);
+ expect(requests).toEqual(['DELETE']);
+ await page.screenshot({path:testInfo.outputPath('gallery-delete-failed.png')});
+ await page.unroute(detailUrl);
+
+ const deleted=page.waitForResponse(response=>response.request().method()==='DELETE'&&response.ok());
+ const refreshed=page.waitForResponse(response=>listRequest(response.url()));
+ let confirmation='';
+ page.once('dialog',dialog=>{confirmation=dialog.message();return dialog.accept();});
+ await remove.click();
+ const response=await deleted;
+ const after=await refreshed;
+ expect(confirmation).toContain('永久删除这张图片及其全部来源记录');
+ expect(new URL(after.url()).searchParams.get('q')).toBe('山色');
+ const removedId=new URL(response.url()).pathname.split('/').pop();
+ const listing=await after.json();
+ expect(listing.total).toBe(5);
+ expect(listing.items.map((item:{id:string})=>item.id)).not.toContain(removedId);
+ await expect(cards).toHaveCount(5);
+ await expect(search).toHaveValue('山色');
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ await expect(page.getByRole('status')).toContainText('图片已删除');
+ expect(requests).toEqual(['DELETE','DELETE','GET']);
+ expect(errors).toEqual([]);
+ await page.screenshot({path:testInfo.outputPath('gallery-delete-success.png')});
+});

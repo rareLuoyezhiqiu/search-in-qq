@@ -2,14 +2,24 @@ import {reactive} from 'vue';
 import {Capacitor,registerPlugin} from '@capacitor/core';
 export const state=reactive({server:localStorage.getItem('server')||'',token:'',cacheEpoch:0,cacheBytes:0,cacheLimit:Number(localStorage.getItem('cacheLimit'))||200*1024*1024});
 const cache=new Map<string,{url:string,size:number}>();
+function evictMedia(key:string){
+ const item=cache.get(key);
+ if(!item)return;
+ URL.revokeObjectURL(item.url);
+ cache.delete(key);
+ state.cacheBytes-=item.size;
+}
 export function clearCache(keepImageId?:string){
  state.cacheEpoch++;
- for(const [key,item] of cache){
+ for(const key of cache.keys()){
   if(keepImageId && key.startsWith(keepImageId+':'))continue;
-  URL.revokeObjectURL(item.url);
-  cache.delete(key);
-  state.cacheBytes-=item.size;
+  evictMedia(key);
  }
+}
+export function discardImageMedia(id:string){
+ state.cacheEpoch++;
+ evictMedia(id+':true');
+ evictMedia(id+':false');
 }
 export class ApiError extends Error {
  constructor(readonly status:number,message:string){super(message);}
@@ -30,7 +40,7 @@ export async function media(id:string,thumbnail=true){
  const blob=await response.blob();
  if(epoch!==state.cacheEpoch)throw new Error('缓存已更新，请重试');
  if(cache.has(key))return cache.get(key)!.url;
- while(state.cacheBytes+blob.size>state.cacheLimit&&cache.size){const oldest=cache.keys().next().value!;const item=cache.get(oldest)!;URL.revokeObjectURL(item.url);state.cacheBytes-=item.size;cache.delete(oldest);}
+ while(state.cacheBytes+blob.size>state.cacheLimit&&cache.size){evictMedia(cache.keys().next().value!);}
  if(blob.size>state.cacheLimit)throw new Error('图片超过手机缓存上限，请调整设置');
  const url=URL.createObjectURL(blob);cache.set(key,{url,size:blob.size});state.cacheBytes+=blob.size;return url;
 }
