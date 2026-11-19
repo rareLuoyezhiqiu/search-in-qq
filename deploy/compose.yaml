@@ -2,6 +2,8 @@ services:
   api:
     build: ../backend
     restart: unless-stopped
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     volumes: [collector-data:/data]
     command: [sh, -c, 'alembic upgrade head && python -m collector.cli cleanup && uvicorn collector.api:app --host 0.0.0.0 --port 8000 --no-access-log']
     healthcheck:
@@ -18,6 +20,7 @@ services:
     volumes: [collector-data:/data]
     environment:
       INGEST_TOKEN: ${INGEST_TOKEN:?set a random token of at least 32 characters}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     command: [sh, -c, 'uvicorn collector.worker:app --host 0.0.0.0 --port 8001 --no-access-log']
     ports: ['127.0.0.1:8001:8001']
     depends_on:

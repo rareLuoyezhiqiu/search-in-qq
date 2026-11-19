@@ -40,6 +40,14 @@ python -m venv .venv
 
 事件必须有 self_id、group_id、message_id、time、user_id、message 数组。仅接收 App 中启用的群。重复事件不会重复保存或延长有效期。群名使用用户设置的名称，来源记录不承诺跳转 QQ 原消息。真实账号是否能接收到普通群图片仍需现场验证。
 
+## 定时图片识别
+
+在拾图「设置」填写每日识别时间（北京时间）和中文保留规则，可先用「试跑规则」检查最近最多六张图片。试跑只展示判断和理由。开启定时识别后，首次运行处理图库中符合该批截止时间的图片，以后处理新图片及上次因故失败的图片。修改保留规则后，下批重新按新规则判定。
+
+识别使用 DeepSeek 的 `deepseek-flash`，只发送缩略图和保留规则。明确不符合规则且未收藏的图会从图库删除，文件由定时清理回收。已收藏、待确认、接口失败的图片不参与自动删除。可选让符合规则的图片自动收藏，否则仍按普通图片的期限保留。
+
+systemd 部署在仅管理员可读的 `/etc/shitu.env` 中设置 `DEEPSEEK_API_KEY`，完成数据库迁移后重启 `shitu-api` 和 `shitu-worker`。Compose 部署通过 `.env` 提供相同变量。API 和 worker 都应读取该配置，网页不会读取密钥。此功能默认关闭。
+
 ## APK 构建和安装
 
 在 app 执行 `npm run android`，再进入 app/android 执行 `gradlew.bat assembleDebug`（Linux 用 ./gradlew）。JAVA_HOME 指向 JDK 21；local.properties 的 sdk.dir 指向本机 Android SDK。

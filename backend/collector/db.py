@@ -20,6 +20,38 @@ CREATE TABLE IF NOT EXISTS runtime (id INTEGER PRIMARY KEY CHECK(id=1), heartbea
 INSERT OR IGNORE INTO runtime(id) VALUES(1);
 '''
 
+AI_SCHEMA = '''
+CREATE TABLE IF NOT EXISTS ai_settings (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    daily_time TEXT NOT NULL DEFAULT '23:30',
+    prompt TEXT NOT NULL DEFAULT '',
+    auto_favorite INTEGER NOT NULL DEFAULT 0,
+    changed_at REAL NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO ai_settings(id) VALUES(1);
+CREATE TABLE IF NOT EXISTS ai_batches (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    cutoff REAL UNIQUE,
+    started REAL NOT NULL,
+    prompt TEXT NOT NULL,
+    rule_key TEXT NOT NULL,
+    auto_favorite INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ai_items (
+    batch_id INTEGER NOT NULL REFERENCES ai_batches(id) ON DELETE CASCADE,
+    image_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    lease REAL NOT NULL DEFAULT 0,
+    decision TEXT,
+    reason TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(batch_id,image_id)
+);
+CREATE INDEX IF NOT EXISTS ai_item_status ON ai_items(status,lease,batch_id);
+CREATE INDEX IF NOT EXISTS ai_item_image ON ai_items(image_id,batch_id);
+'''
+
 class Store:
     def __init__(self, root=None):
         self.root = Path(root or os.getenv('DATA_DIR', 'data')).resolve()
@@ -35,7 +67,7 @@ class Store:
 
     def init(self):
         with self.engine.begin() as c:
-            for statement in SCHEMA.split(';'):
+            for statement in (SCHEMA + AI_SCHEMA).split(';'):
                 if statement.strip():
                     c.exec_driver_sql(statement)
 

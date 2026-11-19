@@ -301,8 +301,123 @@ def test_incomplete_backup_can_retry_same_destination(env, tmp_path):
 def test_migration_initializes_real_database(tmp_path):
     import subprocess,sys,os
     from pathlib import Path
-    result=subprocess.run([sys.executable,'-m','alembic','upgrade','head'],cwd=Path(__file__).resolve().parents[1],env={**os.environ,'DATA_DIR':str(tmp_path)},capture_output=True)
+    args={'cwd':Path(__file__).resolve().parents[1],'env':{**os.environ,'DATA_DIR':str(tmp_path)},'capture_output':True}
+    result=subprocess.run([sys.executable,'-m','alembic','upgrade','0001'],**args)
     assert result.returncode==0,result.stderr
     store=Store(tmp_path)
-    with store.tx() as c:assert rows(c,'SELECT days FROM settings')[0]['days']==5
+    with store.tx() as c:
+        run(c,'UPDATE settings SET days=7')
+        run(c, "INSERT INTO sources(external_id,name) VALUES('123','保留此来源')")
+    result=subprocess.run([sys.executable,'-m','alembic','upgrade','head'],**args)
+    assert result.returncode==0,result.stderr
+    with store.tx() as c:
+        assert rows(c,'SELECT days FROM settings')[0]['days']==7
+        assert rows(c,'SELECT name FROM sources')[0]['name']=='保留此来源'
+        assert rows(c,'SELECT enabled FROM ai_settings')[0]['enabled']==0
+        assert rows(c,'SELECT version_num FROM alembic_version')[0]['version_num']=='0002'
     store.engine.dispose()
+
+
+def test_scheduled_ai_review_keeps_uncertain_failed_and_favorite_images(env, monkeypatch):
+    from datetime import datetime
+    from collector import review
+    from collector.vision import Decision, VisionError
+
+    store, client = env
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-key')
+    cutoff = (int(time.time())//60+2)*60
+    daily_time = datetime.fromtimestamp(cutoff, review.BEIJING).strftime('%H:%M')
+    settings = {'enabled':True,'daily_time':daily_time,'prompt':'保留插画','auto_favorite':True}
+    assert client.put('/api/ai-review',json=settings).json()['next_run']==cutoff
+
+    ids, thumbnails = {}, {}
+    for index, name in enumerate(('keep','delete','uncertain','favorite','failed','later')):
+        received = cutoff-20+index if name!='later' else cutoff+1
+        ingest(store,event(name,urls=1),received)
+        def draw(url,path):
+            Image.new('RGB',(17+index,25),(index*40,20,70)).save(path,'PNG')
+        assert process_one(store,draw,received)
+        ids[name] = image_id(client)
+        thumbnails[(store.media / (ids[name]+'.jpg')).read_bytes()] = name
+    assert len(set(ids.values()))==6
+    assert client.patch('/api/images/'+ids['favorite'],json={'favorite':True,'note':'手动收藏','tags':[]}).status_code==200
+
+    calls=[]
+    def classify(prompt, thumbnail):
+        assert prompt=='保留插画'
+        name=thumbnails[thumbnail]
+        calls.append(name)
+        if name=='failed':
+            raise VisionError('该张图识别失败')
+        return Decision('delete' if name=='favorite' else name, name+' result')
+
+    assert not review.process_review(store,classify,lambda:cutoff-1)
+    while review.process_review(store,classify,lambda:cutoff+2):
+        pass
+    assert sorted(calls)==['delete','failed','favorite','keep','uncertain']
+    assert client.get('/api/images/'+ids['delete']).status_code==404
+    assert client.get('/api/images/'+ids['keep']).json()['favorite']==1
+    assert client.get('/api/images/'+ids['favorite']).json()['note']=='手动收藏'
+    assert client.get('/api/images/'+ids['uncertain']).status_code==200
+    assert client.get('/api/images/'+ids['failed']).status_code==200
+    assert client.get('/api/images/'+ids['later']).status_code==200
+    summary=client.get('/api/ai-review').json()['scheduled']
+    assert summary['counts']=={'kept':1,'deleted':1,'uncertain':1,'protected':1,'failed':1}
+    assert not review.process_review(store,classify,lambda:cutoff+3)
+    cleanup(store,cutoff+601)
+    assert not (store.media/(ids['delete']+'.original')).exists()
+
+
+def test_ai_preview_and_changes_never_apply_obsolete_deletion(env, monkeypatch):
+    from datetime import datetime
+    from collector import review
+    from collector.vision import Decision
+
+    store,client=env
+    collect(store)
+    id=image_id(client)
+    api='/api/ai-review'
+    monkeypatch.delenv('DEEPSEEK_API_KEY',raising=False)
+    cutoff=(int(time.time())//60+2)*60
+    cfg={'enabled':True,'daily_time':datetime.fromtimestamp(cutoff,review.BEIJING).strftime('%H:%M'),
+         'prompt':'保留插画','auto_favorite':False}
+    assert client.put(api,json=cfg).status_code==409
+    assert client.post(api+'/preview',json={'prompt':'  '}).status_code==422
+    monkeypatch.setenv('DEEPSEEK_API_KEY','test-key')
+    assert client.put(api,json=cfg).status_code==200
+    assert client.post(api+'/preview',json={'prompt':'试跑规则'}).status_code==202
+    assert client.post(api+'/preview',json={'prompt':'重复试跑'}).status_code==409
+    assert review.process_review(store,lambda *_:Decision('delete','试跑理由'),lambda:cutoff-1)
+    assert client.get(api).json()['preview']['items'][0]['decision']=='delete'
+    assert client.get('/api/images/'+id).status_code==200
+
+    def disable_during_call(*_):
+        assert client.put(api,json={**cfg,'enabled':False}).status_code==200
+        return Decision('delete','过时的判定')
+    assert review.process_review(store,disable_during_call,lambda:cutoff+1)
+    assert client.get('/api/images/'+id).status_code==200
+    assert client.get(api).json()['scheduled']['counts']=={'skipped':1}
+
+
+def test_deepseek_requires_complete_structured_prediction(monkeypatch):
+    import base64
+    import json
+    import httpx
+    from collector.vision import Decision, VisionError, classify
+
+    content={'verdict':'delete','reason':'纯聊天截图'}
+    reply={'choices':[{'finish_reason':'stop','message':{'content':json.dumps(content)}}]}
+    def post(url, **request):
+        assert url=='https://api.deepseek.com/chat/completions'
+        assert request['headers']['Authorization']=='Bearer test-key'
+        sent=request['json']
+        assert sent['model']=='deepseek-flash'
+        parts=sent['messages'][1]['content']
+        assert '保留同人插画' in parts[0]['text']
+        assert base64.b64decode(parts[1]['image_url']['url'].split(',')[1])==b'jpeg'
+        return httpx.Response(200,json=reply)
+    monkeypatch.setattr('collector.vision.httpx.post',post)
+    assert classify('test-key','保留同人插画',b'jpeg')==Decision('delete','纯聊天截图')
+    reply['choices'][0]['finish_reason']='length'
+    with pytest.raises(VisionError):
+        classify('test-key','保留同人插画',b'jpeg')

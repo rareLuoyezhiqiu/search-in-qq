@@ -1,3 +1,4 @@
+import os
 import tempfile
 import time
 import uvicorn
@@ -6,6 +7,7 @@ from collector.db import Store,run
 from collector.api import create_app,passwords
 from collector.service import ingest,process_one
 
+os.environ['DEEPSEEK_API_KEY']='local-e2e-test-key'
 root=tempfile.TemporaryDirectory()
 store=Store(root.name)
 store.init()

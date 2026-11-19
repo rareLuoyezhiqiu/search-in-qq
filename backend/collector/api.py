@@ -9,7 +9,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from pwdlib import PasswordHash
 from .db import Store, rows, run, VISIBLE
-from .service import usage
+from .service import remove_image_records, usage
+from . import review
 
 passwords = PasswordHash.recommended()
 
@@ -31,6 +32,15 @@ class Edit(BaseModel):
 class Settings(BaseModel):
     days: int = Field(ge=1, le=365)
     budget: int = Field(ge=30*1024*1024, le=10**13)
+
+class ReviewSettings(BaseModel):
+    enabled: bool
+    daily_time: str = Field(pattern=r'^(?:[01][0-9]|2[0-3]):[0-5][0-9]$')
+    prompt: str = Field(max_length=4000)
+    auto_favorite: bool
+
+class ReviewPreview(BaseModel):
+    prompt: str = Field(max_length=4000)
 
 def create_app(store=None):
     store = store or Store()
@@ -128,8 +138,7 @@ def create_app(store=None):
             accessible(c,id)
             for suffix in ('.original','.jpg'):
                 (store.media/(id+suffix)).unlink(missing_ok=True)
-            run(c,'DELETE FROM occurrences WHERE image_id=:id',id=id)
-            run(c,'DELETE FROM images WHERE id=:id',id=id)
+            remove_image_records(c,id)
         return {'ok':True}
     @app.get('/api/images/{id}/file',dependencies=[Depends(auth)])
     def file(id:str,thumbnail:bool=False):
@@ -170,6 +179,28 @@ def create_app(store=None):
             run(c,'UPDATE settings SET days=:days,budget=:budget',**body.model_dump())
             run(c,'UPDATE occurrences SET expires=received+:seconds',seconds=body.days*86400)
         return {'ok':True}
+    @app.get('/api/ai-review',dependencies=[Depends(auth)])
+    def get_review_settings():
+        return review.status(store)
+    @app.put('/api/ai-review',dependencies=[Depends(auth)])
+    def put_review_settings(body:ReviewSettings):
+        body.prompt=body.prompt.strip()
+        if body.enabled and not body.prompt:
+            raise HTTPException(422,'请先填写图片保留规则')
+        if body.enabled and not review.configured():
+            raise HTTPException(409,'服务器尚未配置 DeepSeek API Key')
+        review.change_settings(store,body.model_dump())
+        return review.status(store)
+    @app.post('/api/ai-review/preview',status_code=202,dependencies=[Depends(auth)])
+    def start_review_preview(body:ReviewPreview):
+        prompt=body.prompt.strip()
+        if not prompt:
+            raise HTTPException(422,'请先填写图片保留规则')
+        if not review.configured():
+            raise HTTPException(409,'服务器尚未配置 DeepSeek API Key')
+        if review.preview(store,prompt) is None:
+            raise HTTPException(409,'已有试跑正在处理')
+        return review.status(store)
     return app
 
 app=create_app()

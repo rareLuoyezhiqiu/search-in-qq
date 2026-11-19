@@ -37,6 +37,8 @@ def backup_favorites(store, out):
                 run(c, 'DELETE FROM images WHERE favorite=0')
                 run(c, 'DELETE FROM messages WHERE NOT EXISTS(SELECT 1 FROM occurrences WHERE message_id=messages.id)')
                 run(c, 'DELETE FROM sessions')
+                run(c, 'DELETE FROM ai_batches')
+                run(c, 'UPDATE ai_settings SET enabled=0 WHERE id=1')
         finally:
             backup.engine.dispose()
         staged.rename(out)

@@ -52,6 +52,10 @@ def ingest(store, event, now=None):
 def usage(store):
     return sum(p.stat().st_size for p in store.media.iterdir() if p.is_file())
 
+def remove_image_records(c, image_id):
+    run(c, 'DELETE FROM occurrences WHERE image_id=:id', id=image_id)
+    run(c, 'DELETE FROM images WHERE id=:id', id=image_id)
+
 def cleanup(store, now=None):
     now = time.time() if now is None else now
     # Writer lock covers eligibility recheck, unlink and record removal. Failed unlink rolls

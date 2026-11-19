@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import hmac
 import json
 import os
@@ -7,9 +6,12 @@ import re
 import secrets
 import time
 from contextlib import asynccontextmanager
+from functools import partial
 from fastapi import FastAPI, Header, HTTPException, Request
 from .db import Store
 from .service import ingest, process_one, cleanup
+from .review import process_review
+from .vision import classify
 
 def create_worker(store=None):
     store=store or Store()
@@ -25,13 +27,27 @@ def create_worker(store=None):
                 print('Worker cycle failed:',type(exc).__name__,flush=True)
                 worked=False
             await asyncio.sleep(0.1 if worked else 2)
+    async def review_loop(key):
+        classifier = partial(classify, key)
+        while True:
+            try:
+                worked = await asyncio.to_thread(process_review, store, classifier)
+            except Exception as exc:
+                print('AI review cycle failed:', type(exc).__name__, flush=True)
+                worked = False
+            await asyncio.sleep(0.2 if worked else 15)
     @asynccontextmanager
     async def lifespan(app):
-        task=asyncio.create_task(loop())
-        yield
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        tasks=[asyncio.create_task(loop())]
+        key=os.getenv('DEEPSEEK_API_KEY','').strip()
+        if key:
+            tasks.append(asyncio.create_task(review_loop(key)))
+        try:
+            yield
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks,return_exceptions=True)
     app=FastAPI(lifespan=lifespan,docs_url=None,redoc_url=None)
     @app.post('/events/onebot')
     async def event(

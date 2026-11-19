@@ -7,3 +7,15 @@
 .tile-delete{position:absolute;top:8px;left:8px;z-index:2;min-width:44px;min-height:44px;border:1px solid #fff;padding:0 10px;background:#ad3027;color:#fff;font-size:13px;font-weight:650}
 .tile-delete:hover{background:#92231e}
 .tile-delete:focus-visible{outline:2px solid #fff;outline-offset:-4px}
+
+.ai-review textarea{resize:vertical}
+.ai-review input[type=time]{width:auto;display:block}
+.ai-history{border-top:1px solid #d9dfd6;margin-top:18px;padding-top:16px}
+.ai-history h3{margin-top:20px}
+.ai-history ul{padding-left:20px}
+.ai-history li{font-size:13px;margin-bottom:8px}
+.ai-history .ai-preview{list-style:none;padding:0}
+.ai-preview li{display:flex;align-items:center;gap:12px;min-height:56px}
+.ai-preview img{width:56px;height:56px;object-fit:cover;border-radius:6px}
+.ai-preview .placeholder{min-height:0}
+.ai-preview p{margin:0}
