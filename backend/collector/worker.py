@@ -1,6 +1,9 @@
 import asyncio
 import contextlib
+import hmac
+import json
 import os
+import re
 import secrets
 import time
 from contextlib import asynccontextmanager
@@ -31,17 +34,28 @@ def create_worker(store=None):
             await task
     app=FastAPI(lifespan=lifespan,docs_url=None,redoc_url=None)
     @app.post('/events/onebot')
-    async def event(request:Request, authorization:str=Header(default='')):
+    async def event(
+        request: Request,
+        authorization: str = Header(default=''),
+        x_signature: str = Header(default=''),
+    ):
         expected=os.getenv('INGEST_TOKEN','')
-        if len(expected)<32 or not secrets.compare_digest(authorization,'Bearer '+expected):
+        if len(expected)<32:
+            raise HTTPException(401,'接入令牌无效')
+        bearer_ok = secrets.compare_digest(authorization.encode(), ('Bearer '+expected).encode())
+        if not bearer_ok and not re.fullmatch(r'sha1=[0-9a-f]{40}', x_signature):
             raise HTTPException(401,'接入令牌无效')
         payload=bytearray()
         async for chunk in request.stream():
             payload.extend(chunk)
             if len(payload)>1024*1024:
                 raise HTTPException(413,'事件过大')
+        if not bearer_ok:
+            # OneBot signs the exact request bytes, including JSON whitespace.
+            signature = 'sha1=' + hmac.digest(expected.encode(), payload, 'sha1').hex()
+            if not secrets.compare_digest(signature, x_signature):
+                raise HTTPException(401,'接入令牌无效')
         try:
-            import json
             obj=json.loads(payload)
             if not isinstance(obj,dict):
                 raise ValueError()

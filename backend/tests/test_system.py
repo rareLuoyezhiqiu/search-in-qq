@@ -196,6 +196,26 @@ def test_worker_auth_and_malformed_event(env,monkeypatch):
     assert c.post('/events/onebot',json={'post_type':'meta_event','status':{'online':False}}).status_code==200
     with store.tx() as db:assert rows(db,'SELECT online FROM runtime')[0]['online']==0
 
+def test_napcat_http_signature_authenticates_exact_body(env, monkeypatch):
+    import hmac
+    import json
+    from collector.worker import create_worker
+
+    store, _ = env
+    token = 'napcat-test-token-' + 'a' * 24
+    monkeypatch.setenv('INGEST_TOKEN', token)
+    client = TestClient(create_worker(store))
+    body = json.dumps(event(urls=1), ensure_ascii=False, indent=2).encode()
+    signature = 'sha1=' + hmac.digest(token.encode(), body, 'sha1').hex()
+    headers = {'Content-Type': 'application/json', 'X-Signature': signature}
+
+    assert client.post('/events/onebot', content=body+b'\n', headers=headers).status_code == 401
+    invalid = dict(headers, **{'X-Signature': 'sha1=' + 'g' * 40})
+    assert client.post('/events/onebot', content=body, headers=invalid).status_code == 401
+    assert client.post('/events/onebot', content=b'a' * (1024 * 1024 + 1), headers=headers).status_code == 413
+    assert client.post('/events/onebot', content=body, headers=headers).json()['accepted'] is True
+
+
 def test_corrupt_payload_never_saved(env):
     store,client=env
     ingest(store,event(urls=1))

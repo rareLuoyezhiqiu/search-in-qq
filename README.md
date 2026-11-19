@@ -32,8 +32,8 @@ python -m venv .venv
 
 当前适配 OneBot v11 HTTP POST 群消息数组。已有 NapCat 等接入程序需配置：
 
-- 上报 URL：`http://127.0.0.1:8001/events/onebot`（接入程序在宿主机时）。
-- 请求头：`Authorization: Bearer <INGEST_TOKEN>`。这个令牌仅用于采集，不是 App 登录令牌。
+- 上报 URL 使用本机 worker 端口。systemd 部署填 `http://127.0.0.1:18001/events/onebot`，默认 Docker Compose 部署使用端口 `8001`。
+- NapCat 使用「HTTP 客户端」，Token 填 `INGEST_TOKEN` 的值。拾图校验 NapCat 发送的 `X-Signature`（对原始请求体计算 HMAC-SHA1）。其他接入程序也可以使用 `Authorization: Bearer <INGEST_TOKEN>`。
 - 消息格式选择 array；图片段必须提供可下载的公网 HTTPS `data.url`。本地文件路径和内网下载地址被拒绝。
 - 启用心跳，建议间隔 30 秒；`status.online` 决定来源页的连接提示，120 秒无心跳显示异常。
 - 接入程序若在容器中，localhost 指向自身，应通过私有容器网络访问 worker:8001；不要为方便配置而公开入口。
