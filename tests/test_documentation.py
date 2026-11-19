@@ -27,7 +27,7 @@ def missing_local_targets(document):
 class DocumentationTests(unittest.TestCase):
     def test_repository_local_links_resolve(self):
         for document in sorted(ROOT.rglob("*.md")):
-            if any(part in {".git", "node_modules", ".venv"} for part in document.parts):
+            if any(part in {".git", ".local", "node_modules", ".venv"} for part in document.relative_to(ROOT).parts):
                 continue
             with self.subTest(document=str(document.relative_to(ROOT))):
                 self.assertEqual([], missing_local_targets(document))
